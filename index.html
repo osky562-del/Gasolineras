@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa Real AS24 España - Camiones</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        :root { --as24-red: #e2001a; --as24-blue: #003087; }
+        body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        header { background: var(--as24-blue); color: white; padding: 15px; text-align: center; z-index: 1000; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        #map { flex-grow: 1; width: 100%; }
+        .info-card { font-size: 14px; line-height: 1.5; }
+        .info-card b { color: var(--as24-red); font-size: 16px; }
+        .btn-nav { display: block; margin-top: 10px; padding: 8px; background: var(--as24-blue); color: white; text-decoration: none; text-align: center; border-radius: 4px; }
+        .services { margin-top: 5px; color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+
+<header>
+    <i class="fas fa-truck"></i> Red Oficial AS24 España - Direcciones Reales
+</header>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+    // Inicializar el mapa centrado en España
+    const map = L.map('map').setView([40.4167, -3.7037], 6);
+
+    // Capa de mapa (OpenStreetMap)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Datos REALES de estaciones AS24 (Nombre, Dirección, Lat, Lng)
+    const stations = [
+        { name: "AS24 La Jonquera", addr: "Pol. Ind. Camp de l'Oliver, 17700 La Jonquera (Girona)", lat: 42.4103, lng: 2.8712, info: "AdBlue, Parking, Restaurante" },
+        { name: "AS24 Ribarroja (A-3)", addr: "Avda. dels Fusters 42, PI Poyo de Reva, 46394 Loriguilla (Valencia)", lat: 39.4812, lng: -0.5664, info: "AdBlue, GNV HAM, 24h" },
+        { name: "AS24 Picassent (A-7)", addr: "Pol. Ind. La Coma, Manzana 9, 46220 Picassent (Valencia)", lat: 39.3340, lng: -0.4374, info: "AdBlue, Carriles anchos" },
+        { name: "AS24 La Muela (A-2)", addr: "Autovía A-2 KM 306, 50196 La Muela (Zaragoza)", lat: 41.5744, lng: -1.1189, info: "AdBlue, Sentido Madrid" },
+        { name: "AS24 Benavente (A-6)", addr: "Cañada Real Berciana, Salida 261, 49600 Benavente (Zamora)", lat: 42.0234, lng: -5.6512, info: "Duchas, Parking, AdBlue" },
+        { name: "AS24 Guarromán (A-4)", addr: "Pol. Ind. Guadiel, KM 280, 23210 Guarromán (Jaén)", lat: 38.1883, lng: -3.6744, info: "AdBlue, Zona estratégica A-4" },
+        { name: "AS24 Irún (Zaisa)", addr: "Zaisa III, C/ Antxotxipi 2, 20305 Irún (Gipuzkoa)", lat: 43.3361, lng: -1.7655, info: "Frontera, AdBlue, 24h" },
+        { name: "AS24 Torremocha (A-2)", addr: "Autovía A-2 KM 117, 19268 Torremocha del Campo (Guadalajara)", lat: 40.9785, lng: -2.4497, info: "AdBlue, Área 117" },
+        { name: "AS24 Caudete (A-3)", addr: "Autovía A-3 Salida 270, 46315 Caudete de las Fuentes (Valencia)", lat: 39.5525, lng: -1.2720, info: "AdBlue, 24h" },
+        { name: "AS24 Albacete", addr: "Pol. Ind. Romica, Av. B, 02007 Albacete", lat: 39.0521, lng: -1.8412, info: "AdBlue, Especial Camiones" }
+    ];
+
+    // Añadir marcadores al mapa
+    stations.forEach(s => {
+        const marker = L.marker([s.lat, s.lng]).addTo(map);
+        
+        const popupContent = `
+            <div class="info-card">
+                <b>${s.name}</b><br>
+                <i class="fas fa-map-marker-alt"></i> ${s.addr}<br>
+                <div class="services"><i class="fas fa-info-circle"></i> ${s.info}</div>
+                <a href="https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}" target="_blank" class="btn-nav">
+                    <i class="fas fa-location-arrow"></i> Cómo llegar (GPS)
+                </a>
+            </div>
+        `;
+        
+        marker.bindPopup(popupContent);
+    });
+
+</script>
+
+</body>
+</html>
