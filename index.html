@@ -533,6 +533,17 @@ input,select,button{font-family:var(--f);}
         <div class="cta-tx"><div class="cta-t">Nuevo entrenamiento</div><div class="cta-s">Planifica y empieza</div></div>
         <span style="font-size:1.2rem;color:rgba(255,255,255,.35)">›</span>
       </button>
+      <div style="display:flex;gap:8px;margin-bottom:9px;margin-top:0;">
+        <button onclick="exportData()" style="flex:1;height:46px;background:var(--s1);border:1px solid var(--line2);border-radius:var(--r2);color:var(--t2);font-size:.82rem;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Exportar backup
+        </button>
+        <button onclick="importData()" style="flex:1;height:46px;background:var(--s1);border:1px solid var(--line2);border-radius:var(--r2);color:var(--t2);font-size:.82rem;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Restaurar backup
+        </button>
+      </div>
+      <input type="file" id="importFile" accept=".json" style="display:none" onchange="doImport(event)">
       
     </div>
 
@@ -687,11 +698,94 @@ input,select,button{font-family:var(--f);}
 </div>
 
 <script>
-/* ══ STORAGE — localStorage only, no Firebase ══ */
+/* ══ STORAGE — triple redundancy para iPhone PWA ══
+   1. localStorage  (principal)
+   2. sessionStorage (respaldo sesión)
+   3. Cookie        (persiste aunque Safari limpie localStorage)
+   4. IndexedDB     (máxima persistencia en iOS)
+══════════════════════════════════════════════ */
+
+/* ── Cookie helpers (duran 1 año) ── */
+function setCookie(k, v) {
+  try {
+    const d = new Date(); d.setFullYear(d.getFullYear() + 1);
+    // Cookies tienen límite de 4KB, guardamos solo datos críticos
+    const str = JSON.stringify(v);
+    if (str.length < 3800) document.cookie = k+'='+encodeURIComponent(str)+';expires='+d.toUTCString()+';path=/;SameSite=Lax';
+  } catch(e){}
+}
+function getCookie(k) {
+  try {
+    const m = document.cookie.match('(?:^|; )'+k+'=([^;]*)');
+    return m ? JSON.parse(decodeURIComponent(m[1])) : null;
+  } catch(e){ return null; }
+}
+
+/* ── IndexedDB helper ── */
+let idb = null;
+function openIDB() {
+  return new Promise(res => {
+    try {
+      const req = indexedDB.open('ko95fit', 1);
+      req.onupgradeneeded = e => e.target.result.createObjectStore('data');
+      req.onsuccess = e => { idb = e.target.result; res(idb); };
+      req.onerror = () => res(null);
+    } catch(e){ res(null); }
+  });
+}
+function idbSet(k, v) {
+  if (!idb) return;
+  try { idb.transaction('data','readwrite').objectStore('data').put(v, k); } catch(e){}
+}
+function idbGet(k) {
+  return new Promise(res => {
+    if (!idb) return res(null);
+    try {
+      const req = idb.transaction('data').objectStore('data').get(k);
+      req.onsuccess = e => res(e.target.result ?? null);
+      req.onerror = () => res(null);
+    } catch(e){ res(null); }
+  });
+}
+
+/* ── STORE principal ── */
 const STORE = {
-  get: k => { try { return JSON.parse(localStorage.getItem('ko95_'+k)||'null'); } catch{ return null; } },
-  set: (k,v) => { try { localStorage.setItem('ko95_'+k, JSON.stringify(v)); } catch(e){console.warn(e);} }
+  get(k) {
+    try {
+      // Intenta localStorage primero
+      const ls = localStorage.getItem('ko95_'+k);
+      if (ls && ls !== 'null') return JSON.parse(ls);
+      // Fallback sessionStorage
+      const ss = sessionStorage.getItem('ko95_'+k);
+      if (ss && ss !== 'null') return JSON.parse(ss);
+      // Fallback cookie
+      const ck = getCookie('ko95_'+k);
+      if (ck !== null) return ck;
+    } catch(e){}
+    return null;
+  },
+  set(k, v) {
+    const str = JSON.stringify(v);
+    try { localStorage.setItem('ko95_'+k, str); } catch(e){}
+    try { sessionStorage.setItem('ko95_'+k, str); } catch(e){}
+    setCookie('ko95_'+k, v);
+    idbSet('ko95_'+k, v);
+  }
 };
+
+/* ── Inicializar IDB al arrancar ── */
+openIDB().then(async () => {
+  // Si localStorage está vacío pero IDB tiene datos, restaurar
+  if (!localStorage.getItem('ko95_workouts')) {
+    const idbW = await idbGet('ko95_workouts');
+    if (idbW && Array.isArray(idbW) && idbW.length > 0) {
+      localStorage.setItem('ko95_workouts', JSON.stringify(idbW));
+      workouts = idbW;
+      renderDash();
+      toast('Datos restaurados desde respaldo 💾', 'good');
+    }
+  }
+});
 
 /* ══ LOAD DATA ══ */
 let workouts = STORE.get('workouts') || [];
@@ -1071,6 +1165,55 @@ function cycleFontSize() {
   toast('Texto ' + FS_LBL[fsIdx]);
 }
 applyFontSize();
+
+
+/* ══ EXPORT / IMPORT ══ */
+function exportData() {
+  const data = {
+    version: 1,
+    exportDate: new Date().toISOString(),
+    workouts: workouts,
+    weightLogs: weightLogs,
+    bonusXp: bonusXp
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'ko95fit_backup_' + new Date().toISOString().split('T')[0] + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Datos exportados ✓', 'good');
+}
+function importData() {
+  $('importFile').click();
+}
+function doImport(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data.workouts || !Array.isArray(data.workouts)) throw new Error('Formato inválido');
+      if (!confirm('¿Importar ' + data.workouts.length + ' sesiones? Se añadirán a los datos actuales.')) return;
+      // Merge — avoid duplicates by id
+      const existingIds = new Set(workouts.map(w => w.id));
+      const newOnes = data.workouts.filter(w => !existingIds.has(w.id));
+      workouts = [...workouts, ...newOnes].sort((a,b) => b.date.localeCompare(a.date));
+      if (data.weightLogs) weightLogs = data.weightLogs;
+      if (data.bonusXp) bonusXp = data.bonusXp;
+      saveWorkouts();
+      STORE.set('weights', weightLogs);
+      STORE.set('bonusXp', bonusXp);
+      renderDash(); updateXpBar();
+      toast(newOnes.length + ' sesiones importadas ✓', 'good');
+    } catch(err) {
+      toast('Error al importar: ' + err.message, 'err');
+    }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+}
 
 
 /* ══ INIT ══ */
