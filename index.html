@@ -459,7 +459,7 @@ input,select,button{font-family:var(--f);}
 @keyframes prPop{from{transform:translateX(-50%) translateY(-14px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
 .pr-emoji{font-size:1.4rem;margin-bottom:3px;}
 .pr-t{font-size:.84rem;font-weight:800;color:var(--gold);}
-.pr-d{font-size:.7rem;color:rgba(255,215,0,.65);margin-top:2px;}
+.pr-d{font-size:.7rem;color:rgba(255,208,96,.65);margin-top:2px;}
 .xp-float{position:fixed;left:50%;transform:translateX(-50%);z-index:960;pointer-events:none;font-family:var(--fm);font-size:1rem;font-weight:800;color:var(--gold);text-shadow:0 0 14px rgba(255,215,0,.6);animation:xpFl 1.6s ease-out both;}
 @keyframes xpFl{0%{opacity:1;transform:translateX(-50%) translateY(0)}100%{opacity:0;transform:translateX(-50%) translateY(-55px)}}
 
@@ -685,6 +685,7 @@ input,select,button{font-family:var(--f);}
 .sec-dash{font-size:.64rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--t3);margin:20px 0 10px;}
 
 </style>
+<base target="_blank">
 </head>
 <body>
 
@@ -1260,9 +1261,18 @@ const TPL={
 
 /* ══ STATE ══ */
 let planExs=[], restSelIdx=-1;
-let liveExs=[], liveIdx=0, liveTotalSec=0, livePauseSec=0;
+let liveExs=[], liveIdx=0;
+let liveTotalSec=0, livePauseSec=0;
 let liveTotalInt=null, livePauseInt=null, liveIsPaused=false, livePauseCnt=0;
 let restLeft=0, restTotal=0, restInt=null;
+
+// NUEVO: Timestamp-based timers — survive background/lock
+let liveStartTs=0;       // Date.now() when workout started
+let livePauseStartTs=0;  // Date.now() when current pause started
+let livePausedMs=0;      // total ms paused so far (excluding current pause)
+let restStartTs=0;       // Date.now() when rest started
+let restDurationMs=0;    // rest duration in ms
+
 let charts={}, delId=null, cMetric='MAX', cTime='ALL';
 
 /* ══ UTILS ══ */
@@ -1287,7 +1297,35 @@ function showPR(name,kg){$('prT').textContent='¡Nuevo récord personal!';$('prD
 
 /* ══ REST ══ */
 const LRC=2*Math.PI*17;
-function startRest(sec,msg){if(!sec||liveIsPaused)return;stopRest();restLeft=restTotal=sec;$('lrrN').textContent=sec;$('lvRestSub').textContent=msg||'Prepárate';$('lvRest').classList.add('show');updRing();restInt=setInterval(()=>{restLeft--;$('lrrN').textContent=restLeft;updRing();if(restLeft<=0){stopRest();toast('¡Listo! 💪','good');vib([100,60,120]);}},1000);}
+function startRest(sec, msg) {
+  if (!sec || liveIsPaused) return;
+  stopRest();
+  
+  // USAR timestamps en lugar de contador decremental
+  restDurationMs = sec * 1000;
+  restStartTs = Date.now();
+  restTotal = sec; // para compatibilidad con UI
+  
+  $('lrrN').textContent = sec;
+  $('lvRestSub').textContent = msg || 'Prepárate';
+  $('lvRest').classList.add('show');
+  updRing();
+  
+  restInt = setInterval(() => {
+    const elapsed = Date.now() - restStartTs;
+    const remaining = Math.max(0, Math.ceil((restDurationMs - elapsed) / 1000));
+    
+    restLeft = remaining;
+    $('lrrN').textContent = remaining;
+    updRing();
+    
+    if (remaining <= 0) {
+      stopRest();
+      toast('¡Listo! 💪', 'good');
+      vib([100, 60, 120]);
+    }
+  }, 500); // revisar cada 500ms es suficiente
+}
 function updRing(){$('lrrProg').style.strokeDashoffset=LRC*(1-restLeft/restTotal);}
 function stopRest(){clearInterval(restInt);restInt=null;$('lvRest').classList.remove('show');}
 function skipRest(){stopRest();}
@@ -1390,14 +1428,28 @@ function pickRest(sec,btn){document.querySelectorAll('.rp-opt').forEach(e=>e.cla
 function startLiveMode(){
   if(!planExs.length)return;
   liveExs=planExs.map(ex=>({name:ex.name,restSec:ex.restSec,sets:Array.from({length:ex.sets},()=>({kg:ex.kg||'',reps:ex.reps,done:false}))}));
-  liveIdx=0;liveTotalSec=0;livePauseSec=0;liveIsPaused=false;livePauseCnt=0;
+  liveIdx=0;
+  
+  // NUEVO: Timestamp-based timing
+  liveStartTs = Date.now();
+  livePausedMs = 0;
+  livePauseStartTs = 0;
+  
+  liveIsPaused=false;livePauseCnt=0;
   $('lvTime').textContent='00:00';$('lvTime').className='lv-time';
   $('lvPauseIco').innerHTML='<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
   $('lvPausedOv').classList.remove('show');stopRest();
   $('planMode').classList.remove('show');
   $('liveMode').classList.add('show');
-  liveTotalInt=setInterval(()=>{if(!liveIsPaused){liveTotalSec++;$('lvTime').textContent=fmt(liveTotalSec);$('lvClock').textContent=fmt(liveTotalSec);}},1000);
-  renderLiveEx();updateLvStats();
+  
+  // NUEVO: setInterval con timestamps
+  liveTotalInt = setInterval(() => {
+    if (liveIsPaused) return;
+    const elapsed = Math.floor((Date.now() - liveStartTs - livePausedMs) / 1000);
+    liveTotalSec = elapsed; // mantener compatibilidad
+    $('lvTime').textContent = fmt(elapsed);
+    $('lvClock').textContent = fmt(elapsed);
+  }, 500); // 500ms para responsiveness
 }
 function backToPlan(){
   if(!confirm('¿Volver a la planificación?'))return;
@@ -1405,17 +1457,39 @@ function backToPlan(){
   $('liveMode').classList.remove('show');$('planMode').classList.add('show');
 }
 function togglePause(){
-  liveIsPaused=!liveIsPaused;
-  if(liveIsPaused){
-    livePauseCnt++;$('lvPauseCnt').textContent=livePauseCnt;
-    $('lvPausedOv').classList.add('show');$('lvTime').className='lv-time paused';
-    $('lvPauseIco').innerHTML='<polygon points="5 3 19 12 5 21 5 3"/>';
-    livePauseInt=setInterval(()=>{livePauseSec++;$('lvPauseTime').textContent=fmt(livePauseSec);},1000);
-    stopRest();toast('Pausado ⏸');
+  liveIsPaused = !liveIsPaused;
+  if (liveIsPaused) {
+    // INICIAR pausa con timestamp
+    livePauseStartTs = Date.now();
+    livePauseCnt++;
+    $('lvPauseCnt').textContent = livePauseCnt;
+    $('lvPausedOv').classList.add('show');
+    $('lvTime').className = 'lv-time paused';
+    $('lvPauseIco').innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+    
+    // Pausar contador de descanso también
+    stopRest();
+    
+    // Mostrar tiempo de pausa acumulado
+    livePauseInt = setInterval(() => {
+      const currentPauseMs = Date.now() - livePauseStartTs;
+      const totalPausedMs = livePausedMs + currentPauseMs;
+      $('lvPauseTime').textContent = fmt(Math.floor(totalPausedMs / 1000));
+    }, 500);
+    
+    toast('Pausado ⏸');
   } else {
-    clearInterval(livePauseInt);$('lvPausedOv').classList.remove('show');$('lvTime').className='lv-time';
-    $('lvPauseIco').innerHTML='<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
-    toast('¡Vamos! 💪','good');
+    // FINALIZAR pausa: acumular tiempo pausado
+    if (livePauseStartTs) {
+      livePausedMs += Date.now() - livePauseStartTs;
+    }
+    livePauseStartTs = 0;
+    
+    clearInterval(livePauseInt);
+    $('lvPausedOv').classList.remove('show');
+    $('lvTime').className = 'lv-time';
+    $('lvPauseIco').innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+    toast('¡Vamos! 💪', 'good');
   }
 }
 function navEx(dir){const n=liveIdx+dir;if(n<0||n>=liveExs.length)return;liveIdx=n;stopRest();renderLiveEx();}
@@ -1463,14 +1537,36 @@ function finishLive(){
   const pct=total?Math.round(done/total*100):0;
   if(pct<100&&!confirm(`Has completado el ${pct}% (${done}/${total} series). ¿Finalizar?`))return;
   clearInterval(liveTotalInt);clearInterval(livePauseInt);stopRest();
+  
+  // NUEVO: Calcular duración usando timestamps
+  const totalDurationMs = liveIsPaused && livePauseStartTs 
+    ? (livePauseStartTs - liveStartTs)  // aún pausado
+    : (Date.now() - liveStartTs - livePausedMs);
+  
+  const totalMinutes = Math.round(totalDurationMs / 60000);
+  const pauseMinutes = liveIsPaused && livePauseStartTs
+    ? Math.round((livePausedMs + (Date.now() - livePauseStartTs)) / 60000)
+    : Math.round(livePausedMs / 60000);
+  
   const exercises=liveExs.map(ex=>({ex:ex.name,kg:String(Math.max(...ex.sets.map(s=>+s.kg||0))||''),sets:ex.sets.length,reps:ex.sets[0]?.reps||10,setsDetail:ex.sets.map(s=>({kg:s.kg||'',reps:s.reps,done:!!s.done}))}));
-  const wk={id:uid(),date:$('planDate').value||new Date().toISOString().split('T')[0],duration:liveTotalSec?Math.round(liveTotalSec/60):'',pauseDuration:livePauseSec?Math.round(livePauseSec/60):'',pauseCount:livePauseCnt,rpe:getRpeValue(),notes:$('planNotes').value||'',exercises};
+  
   // Detect new PRs before saving
   const newPRs=[];
   exercises.forEach(ex=>{
     const prev=getPR(ex.ex);
     if(+ex.kg>0&&+ex.kg>prev) newPRs.push(ex.ex+' '+ex.kg+'kg');
   });
+
+  const wk={
+    id:uid(),
+    date:$('planDate').value||new Date().toISOString().split('T')[0],
+    duration: totalMinutes,  // minutos totales reales
+    pauseDuration: pauseMinutes || '',  // minutos pausado
+    pauseCount:livePauseCnt,
+    rpe:getRpeValue(),
+    notes:$('planNotes').value||'',
+    exercises
+  };
 
   workouts.unshift(wk); saveWorkouts();
   $('liveMode').classList.remove('show');
@@ -2444,6 +2540,31 @@ function getRpeValue(){
   const est = estimateRpe();
   return est ? est.toFixed(1) : '';
 }
+
+/* ══ BACKGROUND / VISIBILITY RESYNC ══ */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    // Resincronizar todos los timers inmediatamente al volver
+    if (liveTotalInt && !liveIsPaused && liveStartTs) {
+      const elapsed = Math.floor((Date.now() - liveStartTs - livePausedMs) / 1000);
+      liveTotalSec = elapsed;
+      if ($('lvTime'))  $('lvTime').textContent  = fmt(elapsed);
+      if ($('lvClock')) $('lvClock').textContent = fmt(elapsed);
+    }
+    if (restInt && restStartTs) {
+      const elapsed   = Date.now() - restStartTs;
+      const remaining = Math.max(0, Math.ceil((restDurationMs - elapsed) / 1000));
+      restLeft = remaining;
+      if ($('lrrN')) $('lrrN').textContent = remaining;
+      updRing();
+      if (remaining <= 0) {
+        stopRest();
+        toast('¡Descanso terminado! 💪', 'good');
+        vib([100, 60, 120]);
+      }
+    }
+  }
+});
 
 /* ══ INIT ══ */
 updateGreeting();
